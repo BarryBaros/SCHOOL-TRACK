@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from datetime import datetime
 from extensions import db
 
 app = Flask(__name__)
@@ -10,6 +11,24 @@ db.init_app(app)
 
 from models.student import Student
 
+def validate_date(date_string):
+   try:
+      date = datetime.strptime(date_string, "%Y-%m-%d").date()
+
+      if date > datetime.today().date():
+         return None
+
+      return date
+
+   except ValueError:
+      return None
+
+def validate_name(name):
+   if not name or not name.strip():
+      return False
+
+   return True
+
 @app.route("/")
 def home():
   return "School Track API is running!"
@@ -17,10 +36,52 @@ def home():
 @app.route("/students", methods=["POST"])
 def create_student():
    data = request.get_json()
+
+   if not data:
+      return jsonify({
+         "message": "Request body is required"
+      }), 400
+
+   required_fields = ["admission_number", "first_name", "last_name", "grade", "date_of_birth"]
+
+   for field in required_fields:
+      if field not in data or not data[field]:
+         return jsonify({
+            "message": f"{field} is required"
+         }), 400
+
+   if not validate_name(data["first_name"]):
+      return jsonify({
+         "message": "First name cannot be empty"
+         }), 400
+      
+   if not validate_name(data["last_name"]):
+      return jsonify({
+         "message": "Last name cannot be empty"
+         }), 400
+
+   date_of_birth = validate_date(data["date_of_birth"])
+   
+   if date_of_birth is None:
+      return jsonify({
+         "message": "Invalid date of birth. Use YYYY-MM-DD format."
+         }), 400
+
+   existing_student = Student.query.filter_by(
+      admission_number=data["admission_number"]
+   ).first()
+
+   if existing_student:
+      return jsonify({
+         "message": "Admission number already exists"
+      }), 409
+
    student = Student(
         admission_number=data["admission_number"],
         first_name=data["first_name"],
-        last_name=data["last_name"]
+        last_name=data["last_name"],
+        grade=data["grade"],
+        date_of_birth=data["date_of_birth"]
      )
    
    db.session.add(student)
@@ -32,7 +93,9 @@ def create_student():
          "id": student.id,
          "admission_number": student.admission_number,
          "first_name": student.first_name,
-         "last_name": student.last_name
+         "last_name": student.last_name,
+         "grade": student.grade,
+         "date_of_birth": student.date_of_birth.isoformat() if student.date_of_birth else None
       }
    }), 201
 
@@ -45,10 +108,145 @@ def get_students():
          "id": student.id,
          "admission_number": student.admission_number,
          "first_name": student.first_name,
-         "last_name": student.last_name
+         "last_name": student.last_name,
+         "grade": student.grade,
+         "date_of_birth": student.date_of_birth.isoformat() if student.date_of_birth else None
       }
       for student in students
    ])
+
+@app.route("/students/search", methods=["GET"])
+def search_student():
+   admission_number = request.args.get("admission_number")
+
+   if not admission_number:
+      return jsonify({
+         "message": "Admission number required!"
+      }), 400
+
+   student = Student.query.filter_by(
+      admission_number=admission_number
+   ).first()
+
+   if student is None:
+      return jsonify({
+         "message": "Student not found!"
+      }), 404
+
+   return jsonify({
+      "id": student.id,
+      "admission_number": student.admission_number,
+      "first_name": student.first_name,
+      "last_name": student.last_name,
+      "grade": student.grade,
+      "date_of_birth": student.date_of_birth.isoformat() if student.date_of_birth else None
+   })
+
+@app.route("/students/<int:id>", methods=["GET"])
+def get_student(id):
+   student = Student.query.get(id)
+
+   if student is None:
+      return jsonify({
+         "message": "Student not found!"
+      }), 404
+
+   return jsonify({
+      "id": student.id,
+      "admission_number": student.admission_number,
+      "first_name": student.first_name,
+      "last_name": student.last_name,
+      "grade": student.grade,
+      "date_of_birth": student.date_of_birth.isoformat() if student.date_of_birth else None
+   })
+
+@app.route("/students/<int:id>", methods=["PUT"])
+def update_student(id):
+   student = Student.query.get(id)
+
+   if student is None:
+      return jsonify({
+         "message": "Student not found!"
+      }), 404
+
+   data = request.get_json()
+
+   if not data:
+      return jsonify({
+         "message": "Request body is required"
+      }), 400
+   
+   required_fields = ["admission_number", "first_name", "last_name", "grade", "date_of_birth"]
+
+   for field in required_fields:
+      if field not in data or not data[field]:
+         return jsonify({
+            "message": f"{field} is required"
+         }), 400
+
+   if not validate_name(data["first_name"]):
+      return jsonify({
+         "message": "First name cannot be empty"
+         }), 400
+
+   if not validate_name(data["last_name"]):
+      return jsonify({
+         "message": "Last name cannot be empty"
+         }), 400
+   
+   
+   date_of_birth = validate_date(data["date_of_birth"])
+
+   if date_of_birth is None:
+      return jsonify({
+          "message": "Invalid date of birth. Use YYYY-MM-DD format."
+      }), 400
+
+   existing_student = Student.query.filter_by(
+      admission_number=data["admission_number"]
+   ).first()
+      
+   if existing_student and existing_student.id != student.id:
+      return jsonify({
+         "message": "Admission number already exists"
+      }), 409
+      
+   student.admission_number = data["admission_number"]
+   student.first_name = data["first_name"]
+   student.last_name = data["last_name"]
+   student.grade = data["grade"]
+   student.date_of_birth = date_of_birth
+
+   db.session.commit()
+
+   return jsonify({
+      "message": "Student updated successfully!",
+      "student": {
+         "id": student.id,
+         "admission_number": student.admission_number,
+         "first_name": student.first_name,
+         "last_name": student.last_name,
+         "grade": student.grade,
+         "date_of_birth": student.date_of_birth.isoformat() if student.date_of_birth else None
+      }
+   })
+
+
+@app.route("/students/<int:id>", methods=["DELETE"])
+def delete_student(id):
+   student = Student.query.get(id)
+
+   if student is None:
+      return jsonify({
+         "message": "Student not found!"
+      }), 404
+
+   db.session.delete(student)
+   db.session.commit()
+
+   return jsonify({
+      "message": "Student deleted successfully!"
+   })
 
 with app.app_context():
     db.create_all()
