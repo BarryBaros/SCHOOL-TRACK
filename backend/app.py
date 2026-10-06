@@ -10,6 +10,7 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db.init_app(app)
 
 from models.student import Student
+from models.attendance import Attendance
 
 def validate_date(date_string):
    try:
