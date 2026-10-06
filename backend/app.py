@@ -29,6 +29,50 @@ def validate_name(name):
 
    return True
 
+def validate_admission_number(admission_number):
+   if not admission_number or not admission_number.strip():
+      return False
+
+   return True
+
+def validate_grade(grade):
+   valid_grades = [
+      "PP 1",
+      "PP 2",
+      "PP 3",
+      "Grade 1",
+      "Grade 2",
+      "Grade 3",
+      "Grade 4",
+      "Grade 5",
+      "Grade 6",
+      "Grade 7"
+   ]
+
+   if grade.strip() not in valid_grades:
+      return False
+
+   return True
+
+def validate_student_data(data):
+   if not validate_name(data["first_name"]):
+      return "First name cannot be empty"
+
+   if not validate_name(data["last_name"]):
+      return "Last name cannot be empty"
+
+   if not validate_admission_number(data["admission_number"]):
+      return "Admission number cannot be empty"
+
+   if not validate_grade(data["grade"]):
+      return "Invalid grade"
+
+   date_of_birth = validate_date(data["date_of_birth"])
+
+   if date_of_birth is None:
+      return "Invalid date of birth. Use YYYY-MM-DD format."
+   return None
+
 @app.route("/")
 def home():
   return "School Track API is running!"
@@ -50,25 +94,19 @@ def create_student():
             "message": f"{field} is required"
          }), 400
 
-   if not validate_name(data["first_name"]):
+   error = validate_student_data(data)
+
+   if error:
       return jsonify({
-         "message": "First name cannot be empty"
-         }), 400
-      
-   if not validate_name(data["last_name"]):
-      return jsonify({
-         "message": "Last name cannot be empty"
-         }), 400
+         "message": error
+      }), 400
 
    date_of_birth = validate_date(data["date_of_birth"])
-   
-   if date_of_birth is None:
-      return jsonify({
-         "message": "Invalid date of birth. Use YYYY-MM-DD format."
-         }), 400
+
+   admission_number = data["admission_number"].strip()
 
    existing_student = Student.query.filter_by(
-      admission_number=data["admission_number"]
+      admission_number=admission_number
    ).first()
 
    if existing_student:
@@ -77,11 +115,11 @@ def create_student():
       }), 409
 
    student = Student(
-        admission_number=data["admission_number"],
-        first_name=data["first_name"],
-        last_name=data["last_name"],
-        grade=data["grade"],
-        date_of_birth=data["date_of_birth"]
+        admission_number=admission_number,
+        first_name=data["first_name"].strip(),
+        last_name=data["last_name"].strip(),
+        grade=data["grade"].strip(),
+        date_of_birth=date_of_birth
      )
    
    db.session.add(student)
@@ -184,26 +222,19 @@ def update_student(id):
             "message": f"{field} is required"
          }), 400
 
-   if not validate_name(data["first_name"]):
-      return jsonify({
-         "message": "First name cannot be empty"
-         }), 400
+   error = validate_student_data(data)
 
-   if not validate_name(data["last_name"]):
+   if error:
       return jsonify({
-         "message": "Last name cannot be empty"
-         }), 400
-   
-   
-   date_of_birth = validate_date(data["date_of_birth"])
-
-   if date_of_birth is None:
-      return jsonify({
-          "message": "Invalid date of birth. Use YYYY-MM-DD format."
+         "message": error
       }), 400
 
+   date_of_birth = validate_date(data["date_of_birth"])
+
+   admission_number = data["admission_number"].strip()
+
    existing_student = Student.query.filter_by(
-      admission_number=data["admission_number"]
+      admission_number=admission_number
    ).first()
       
    if existing_student and existing_student.id != student.id:
@@ -211,10 +242,10 @@ def update_student(id):
          "message": "Admission number already exists"
       }), 409
       
-   student.admission_number = data["admission_number"]
-   student.first_name = data["first_name"]
-   student.last_name = data["last_name"]
-   student.grade = data["grade"]
+   student.admission_number = admission_number
+   student.first_name = data["first_name"].strip()
+   student.last_name = data["last_name"].strip()
+   student.grade = data["grade"].strip()
    student.date_of_birth = date_of_birth
 
    db.session.commit()
