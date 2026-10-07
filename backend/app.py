@@ -333,6 +333,68 @@ def record_arrival():
       }
    }), 201
 
+
+@app.route("/attendance/departure", methods=["POST"])
+
+def record_departure():
+
+   data = request.get_json()
+   
+   if not data or "admission_number" not in data:
+
+      return jsonify({
+         "message": "Admission number is required"
+      }), 400
+
+   admission_number = data["admission_number"].strip()
+
+   student = Student.query.filter_by(
+      admission_number=admission_number
+   ).first()
+
+   if student is None:
+
+      return jsonify({
+         "message": "Student not found"
+      }), 404
+   
+   today = datetime.today().date()
+   attendance = Attendance.query.filter_by(
+      student_id=student.id,
+      attendance_date=today
+   ).first()
+
+   if attendance is None:
+
+      return jsonify({
+         "message": "Student has no arrival record for today."
+      }), 404
+
+   if attendance.departure_time is not None:
+
+      return jsonify({
+         "message": "Student has already departed today."
+      }), 409
+
+   attendance.departure_time = datetime.now()
+   
+   db.session.commit()
+
+   return jsonify({
+         "message": "Departure recorded successfully",
+         "student": {
+            "id": student.id,
+            "admission_number": student.admission_number,
+            "first_name": student.first_name,
+            "last_name": student.last_name,
+            "grade": student.grade,
+            "arrival_time": attendance.arrival_time.isoformat(),
+            "departure_time": attendance.departure_time.isoformat()
+         }
+      }), 200
+   
+
+
 with app.app_context():
     db.create_all()
 
