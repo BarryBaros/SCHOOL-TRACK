@@ -280,6 +280,59 @@ def delete_student(id):
       "message": "Student deleted successfully!"
    })
 
+@app.route("/attendance/arrival", methods=["POST"])
+def record_arrival():
+   data = request.get_json()
+
+   if not data or "admission_number" not in data:
+      return jsonify({
+         "message": "Admission number is required"
+      }), 400
+
+   admission_number = data["admission_number"].strip()
+
+   student = Student.query.filter_by(
+      admission_number=admission_number
+   ).first()
+
+   if student is None:
+      return jsonify({
+         "message": "Student not found"
+      }), 404
+
+   today = datetime.today().date()
+
+   existing_attendance = Attendance.query.filter_by(
+      student_id=student.id,
+      attendance_date=today
+   ).first()
+
+   if existing_attendance:
+      return jsonify({
+         "message": "Student has already arrived today."
+      }), 409
+
+   attendance = Attendance(
+      student_id=student.id,
+      attendance_date=today,
+      arrival_time=datetime.now()
+   )
+
+   db.session.add(attendance)
+   db.session.commit()
+
+   return jsonify({
+      "message": "Arrival recorded successfully",
+      "student": {
+         "id": student.id,
+         "admission_number": student.admission_number,
+         "first_name": student.first_name,
+         "last_name": student.last_name,
+         "grade": student.grade,
+         "arrival_time": attendance.arrival_time.isoformat()
+      }
+   }), 201
+
 with app.app_context():
     db.create_all()
 
