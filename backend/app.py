@@ -392,8 +392,86 @@ def record_departure():
             "departure_time": attendance.departure_time.isoformat()
          }
       }), 200
-   
 
+@app.route("/attendance", methods=["GET"])
+def get_attendance():
+
+   # attendance_records = Attendance.query.all()
+
+   requested_date = request.args.get("date")
+
+   if requested_date:
+      requested_date = validate_date(requested_date)
+
+      if requested_date is None:
+         return jsonify({
+            "message": "Invalid date. Use YYYY-MM-DD."
+         }), 400
+
+      attendance_records = Attendance.query.filter_by(
+         attendance_date=requested_date
+      ).all()
+
+   else:
+      attendance_records = Attendance.query.all()
+
+   results  = []
+
+   for attendance in attendance_records:
+
+      student = Student.query.get(attendance.student_id)
+
+      results.append({
+         "id": attendance.id,
+         "student_id": attendance.student_id,
+         "admission_number": student.admission_number,
+         "first_name": student.first_name,
+         "last_name": student.last_name,
+         "grade": student.grade,
+         "attendance_date": attendance.attendance_date.isoformat(),
+         "arrival_time": attendance.arrival_time.isoformat(),
+         "departure_time": attendance.departure_time.isoformat() if attendance.departure_time else None
+      })
+      
+   return jsonify(results), 200
+
+@app.route("/attendance/student/<admission_number>", methods=["GET"]) 
+def get_student_attendance(admission_number):
+
+   student = Student.query.filter_by(
+      admission_number=admission_number
+   ).first()
+
+   if student is None:
+      return jsonify({
+         "message": "Student not found"
+      }), 404
+
+   attendance_records = Attendance.query.filter_by(
+      student_id=student.id
+   ).all()
+
+   results = []
+
+   for attendance in attendance_records:
+
+      results.append({
+         "attendance_id": attendance.id,
+         "attendance_date": attendance.attendance_date.isoformat(),
+         "arrival_time": attendance.arrival_time.isoformat(),
+         "departure_time": attendance.departure_time.isoformat() if attendance.departure_time else None
+      })
+
+   return jsonify({
+      "student": {
+         "id": student.id,
+         "admission_number": student.admission_number,
+         "first_name": student.first_name,
+         "last_name": student.last_name,
+         "grade": student.grade
+      },
+      "attendance_records": results
+   }), 200
 
 with app.app_context():
     db.create_all()
