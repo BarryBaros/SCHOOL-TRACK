@@ -1,6 +1,11 @@
 from flask import Flask, request, jsonify
 from datetime import datetime
 from extensions import db
+import os
+import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -120,7 +125,9 @@ def create_student():
         first_name=data["first_name"].strip(),
         last_name=data["last_name"].strip(),
         grade=data["grade"].strip(),
-        date_of_birth=date_of_birth
+        date_of_birth=date_of_birth,
+        parent_name=data.get("parent_name"),
+        parent_phone=data.get("parent_phone")
      )
    
    db.session.add(student)
@@ -134,7 +141,9 @@ def create_student():
          "first_name": student.first_name,
          "last_name": student.last_name,
          "grade": student.grade,
-         "date_of_birth": student.date_of_birth.isoformat() if student.date_of_birth else None
+         "date_of_birth": student.date_of_birth.isoformat() if student.date_of_birth else None,
+         "parent_name": student.parent_name,
+         "parent_phone": student.parent_phone
       }
    }), 201
 
@@ -321,8 +330,16 @@ def record_arrival():
    db.session.add(attendance)
    db.session.commit()
 
+   sms_message = (
+      f"Hello, {student.parent_name or 'Parent/Guardian'}. "
+      f"Your child, {student.first_name} {student.last_name}, "
+      f"has arrived at school at "
+      f"{attendance.arrival_time.strftime('%I:%M %p')}."
+   )
+
    return jsonify({
       "message": "Arrival recorded successfully",
+      "sms_message": sms_message,
       "student": {
          "id": student.id,
          "admission_number": student.admission_number,
@@ -380,8 +397,16 @@ def record_departure():
    
    db.session.commit()
 
+   sms_message = (
+      f"Hello, {student.parent_name or 'Parent/Guardian'}. "
+      f"Your child, {student.first_name} {student.last_name}, "
+      f"has left school at "
+      f"{attendance.departure_time.strftime('%I:%M %p')}."
+   )
+
    return jsonify({
          "message": "Departure recorded successfully",
+         "sms_message": sms_message,
          "student": {
             "id": student.id,
             "admission_number": student.admission_number,
@@ -472,6 +497,8 @@ def get_student_attendance(admission_number):
       },
       "attendance_records": results
    }), 200
+
+
 
 with app.app_context():
     db.create_all()
