@@ -9,7 +9,7 @@ load_dotenv()
 
 app = Flask(__name__)
 
-app.config["SQLALCHEMY_DATABASE_URI"] = "postgresql+psycopg2://baros:Kitinda%408893@localhost/school_track"
+app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db.init_app(app)
@@ -499,6 +499,44 @@ def get_student_attendance(admission_number):
    }), 200
 
 
+def send_sms(phone_number, message):
+   api_key = os.getenv("PAYGRID_API_KEY")
+   base_url = os.getenv("PAYGRID_BASE_URL", "").rstrip("/")
+
+   if not api_key or not base_url:
+      print("SMS settings are missing from .env")
+      return False
+
+   payload = {
+      "recipient": [phone_number],
+      "message": message,
+      "sender_id": "CommsGrid"
+   }
+
+   try:
+      response = requests.post(
+         f"{base_url}/sms/send",
+         headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+         },
+         json=payload,
+         timeout=20
+      )
+
+      print("SMS HTTP status:", response.status_code)
+
+      if response.ok:
+         print("SMS API response:", response.text)
+         return True
+
+      print("SMS request failed:", response.text)
+      return False
+
+   except requests.RequestException as error:
+      print("SMS connection error:", error)
+      return False
 
 with app.app_context():
     db.create_all()
