@@ -337,9 +337,16 @@ def record_arrival():
       f"{attendance.arrival_time.strftime('%I:%M %p')}."
    )
 
+   sms_sent = False
+
+   if student.parent_phone:
+      phone_number = student.parent_phone.strip().replace("+", "")
+      sms_sent = send_sms(phone_number, sms_message)
+
    return jsonify({
       "message": "Arrival recorded successfully",
       "sms_message": sms_message,
+      "sms_sent": sms_sent,
       "student": {
          "id": student.id,
          "admission_number": student.admission_number,
@@ -404,9 +411,16 @@ def record_departure():
       f"{attendance.departure_time.strftime('%I:%M %p')}."
    )
 
+   sms_sent = False
+
+   if student.parent_phone:
+      phone_number = student.parent_phone.strip().replace("+", "")
+      sms_sent = send_sms(phone_number, sms_message)
+
    return jsonify({
          "message": "Departure recorded successfully",
          "sms_message": sms_message,
+         "sms_sent": sms_sent,
          "student": {
             "id": student.id,
             "admission_number": student.admission_number,
@@ -499,44 +513,54 @@ def get_student_attendance(admission_number):
    }), 200
 
 
+
 def send_sms(phone_number, message):
-   api_key = os.getenv("PAYGRID_API_KEY")
-   base_url = os.getenv("PAYGRID_BASE_URL", "").rstrip("/")
+    environment = os.getenv("PAYGRID_ENVIRONMENT", "SANDBOX").upper()
+    base_url = os.getenv("PAYGRID_BASE_URL", "").rstrip("/")
 
-   if not api_key or not base_url:
-      print("SMS settings are missing from .env")
-      return False
+    if environment == "PRODUCTION":
+        api_key = os.getenv("PAYGRID_PRODUCTION_API_KEY")
+        sender_id = os.getenv("PAYGRID_PRODUCTION_SENDER_ID")
+    else:
+        api_key = os.getenv("PAYGRID_API_KEY")
+        sender_id = "CommsGrid"
 
-   payload = {
-      "recipient": [phone_number],
-      "message": message,
-      "sender_id": "CommsGrid"
-   }
+    if not api_key or not base_url or not sender_id:
+        print("SMS settings are missing from .env")
+        return False
 
-   try:
-      response = requests.post(
-         f"{base_url}/sms/send",
-         headers={
-            "Authorization": f"Bearer {api_key}",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-         },
-         json=payload,
-         timeout=20
-      )
+    payload = {
+        "recipient": [phone_number],
+        "message": message,
+        "sender_id": sender_id
+    }
 
-      print("SMS HTTP status:", response.status_code)
+    try:
+        response = requests.post(
+            f"{base_url}/sms/send",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            },
+            json=payload,
+            timeout=20
+        )
 
-      if response.ok:
-         print("SMS API response:", response.text)
-         return True
+        print("SMS environment:", environment)
+        print("SMS HTTP status:", response.status_code)
 
-      print("SMS request failed:", response.text)
-      return False
+        if response.ok:
+            print("SMS API response:", response.text)
+            return True
 
-   except requests.RequestException as error:
-      print("SMS connection error:", error)
-      return False
+        print("SMS request failed:", response.text)
+        return False
+
+    except requests.RequestException as error:
+        print("SMS connection error:", error)
+        return False
+
 
 with app.app_context():
     db.create_all()
