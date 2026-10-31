@@ -13,3 +13,10 @@ class Student(db.Model):
     date_of_birth = db.Column(db.Date)
     parent_name = db.Column(db.String(100), nullable=True)
     parent_phone = db.Column(db.String(20), nullable=True)
+
+    guardians = db.relationship(
+        "Guardian",
+        backref="student",
+        lazy=True,
+        cascade="all, delete-orphan"
+    )

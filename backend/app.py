@@ -16,6 +16,8 @@ db.init_app(app)
 
 from models.student import Student
 from models.attendance import Attendance
+from models.sms_notification import SMSNotification
+from models.guardian import Guardian
 
 def validate_date(date_string):
    try:
@@ -60,6 +62,7 @@ def validate_grade(grade):
 
    return True
 
+
 def validate_student_data(data):
    if not validate_name(data["first_name"]):
       return "First name cannot be empty"
@@ -73,11 +76,14 @@ def validate_student_data(data):
    if not validate_grade(data["grade"]):
       return "Invalid grade"
 
-   date_of_birth = validate_date(data["date_of_birth"])
+   if data.get("date_of_birth"):
+      date_of_birth = validate_date(data["date_of_birth"])
 
-   if date_of_birth is None:
-      return "Invalid date of birth. Use YYYY-MM-DD format."
+      if date_of_birth is None:
+         return "Invalid date of birth. Use YYYY-MM-DD format."
+
    return None
+
 
 @app.route("/")
 def home():
@@ -92,7 +98,7 @@ def create_student():
          "message": "Request body is required"
       }), 400
 
-   required_fields = ["admission_number", "first_name", "last_name", "grade", "date_of_birth"]
+   required_fields = ["admission_number", "first_name", "last_name", "grade"]
 
    for field in required_fields:
       if field not in data or not data[field]:
@@ -107,7 +113,7 @@ def create_student():
          "message": error
       }), 400
 
-   date_of_birth = validate_date(data["date_of_birth"])
+   date_of_birth = validate_date(data["date_of_birth"]) if data.get("date_of_birth") else None
 
    admission_number = data["admission_number"].strip()
 
@@ -208,6 +214,7 @@ def get_student(id):
       "date_of_birth": student.date_of_birth.isoformat() if student.date_of_birth else None
    })
 
+
 @app.route("/students/<int:id>", methods=["PUT"])
 def update_student(id):
    student = Student.query.get(id)
@@ -223,8 +230,8 @@ def update_student(id):
       return jsonify({
          "message": "Request body is required"
       }), 400
-   
-   required_fields = ["admission_number", "first_name", "last_name", "grade", "date_of_birth"]
+
+   required_fields = ["admission_number", "first_name", "last_name", "grade"]
 
    for field in required_fields:
       if field not in data or not data[field]:
@@ -239,19 +246,19 @@ def update_student(id):
          "message": error
       }), 400
 
-   date_of_birth = validate_date(data["date_of_birth"])
+   date_of_birth = validate_date(data["date_of_birth"]) if data.get("date_of_birth") else None
 
    admission_number = data["admission_number"].strip()
 
    existing_student = Student.query.filter_by(
       admission_number=admission_number
    ).first()
-      
+
    if existing_student and existing_student.id != student.id:
       return jsonify({
          "message": "Admission number already exists"
       }), 409
-      
+
    student.admission_number = admission_number
    student.first_name = data["first_name"].strip()
    student.last_name = data["last_name"].strip()
@@ -271,7 +278,6 @@ def update_student(id):
          "date_of_birth": student.date_of_birth.isoformat() if student.date_of_birth else None
       }
    })
-
 
 @app.route("/students/<int:id>", methods=["DELETE"])
 def delete_student(id):
@@ -338,10 +344,23 @@ def record_arrival():
    )
 
    sms_sent = False
+   sms_message_id = None
+   sms_status = None
 
    if student.parent_phone:
       phone_number = student.parent_phone.strip().replace("+", "")
-      sms_sent = send_sms(phone_number, sms_message)
+      sms_sent, sms_message_id, sms_status = send_sms(phone_number, sms_message)
+
+      notification = SMSNotification(
+         attendance_id=attendance.id,
+         notification_type="ARRIVAL",
+         recipient_phone=phone_number,
+         message_id=sms_message_id,
+         status=sms_status or ("SENT" if sms_sent else "FAILED")
+      )
+
+      db.session.add(notification)
+      db.session.commit()
 
    return jsonify({
       "message": "Arrival recorded successfully",
@@ -412,10 +431,23 @@ def record_departure():
    )
 
    sms_sent = False
-
+   sms_message_id = None
+   sms_status = None
+   
    if student.parent_phone:
       phone_number = student.parent_phone.strip().replace("+", "")
-      sms_sent = send_sms(phone_number, sms_message)
+      sms_sent, sms_message_id, sms_status = send_sms(phone_number, sms_message)
+
+      notification = SMSNotification(
+         attendance_id=attendance.id,
+         notification_type="DEPARTURE",
+         recipient_phone=phone_number,
+         message_id=sms_message_id,
+         status=sms_status or ("SENT" if sms_sent else "FAILED")
+      )
+
+      db.session.add(notification)
+      db.session.commit()
 
    return jsonify({
          "message": "Departure recorded successfully",
@@ -512,8 +544,6 @@ def get_student_attendance(admission_number):
       "attendance_records": results
    }), 200
 
-
-
 def send_sms(phone_number, message):
     environment = os.getenv("PAYGRID_ENVIRONMENT", "SANDBOX").upper()
     base_url = os.getenv("PAYGRID_BASE_URL", "").rstrip("/")
@@ -527,7 +557,7 @@ def send_sms(phone_number, message):
 
     if not api_key or not base_url or not sender_id:
         print("SMS settings are missing from .env")
-        return False
+        return False, None, None
 
     payload = {
         "recipient": [phone_number],
@@ -552,18 +582,175 @@ def send_sms(phone_number, message):
 
         if response.ok:
             print("SMS API response:", response.text)
-            return True
+
+            try:
+                result = response.json()
+            except ValueError:
+                return False, None, None
+
+            data = result.get("data", {})
+            details = data.get("details", [])
+            sms_details = details[0] if details else {}
+
+            message_id = sms_details.get("message_id")
+            sms_status = sms_details.get("status")
+
+            return True, message_id, sms_status
 
         print("SMS request failed:", response.text)
-        return False
+        return False, None, None
 
     except requests.RequestException as error:
         print("SMS connection error:", error)
-        return False
+        return False, None, None
 
 
 with app.app_context():
     db.create_all()
+
+@app.route("/sms-notifications", methods=["GET"])
+def get_sms_notifications():
+   notifications = SMSNotification.query.order_by(
+      SMSNotification.created_at.desc()
+   ).all()
+
+   return jsonify({
+      "count": len(notifications),
+      "notifications": [
+         {
+            "id": notification.id,
+            "attendance_id": notification.attendance_id,
+            "notification_type": notification.notification_type,
+            "recipient_phone": notification.recipient_phone,
+            "message_id": notification.message_id,
+            "status": notification.status,
+            "created_at": notification.created_at.isoformat()
+         }
+         for notification in notifications
+      ]
+   }), 200
+
+
+@app.route("/sms-status/<string:message_id>", methods=["GET"])
+def check_sms_status(message_id):
+   environment = os.getenv("PAYGRID_ENVIRONMENT", "SANDBOX").upper()
+   base_url = os.getenv("PAYGRID_BASE_URL", "").rstrip("/")
+
+   if environment == "PRODUCTION":
+      api_key = os.getenv("PAYGRID_PRODUCTION_API_KEY")
+   else:
+      api_key = os.getenv("PAYGRID_API_KEY")
+
+   if not api_key or not base_url:
+      return jsonify({
+         "error": "SMS settings are missing from .env"
+      }), 500
+
+   try:
+      response = requests.get(
+         f"{base_url}/sms/status/{message_id}",
+         headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json"
+         },
+         timeout=20
+      )
+
+      try:
+         result = response.json()
+      except ValueError:
+         return jsonify({
+            "error": "Paygrid returned an invalid JSON response"
+         }), 502
+
+      if not response.ok:
+         return jsonify(result), response.status_code
+
+      #update the database only if Paygrid returns a status in the expected location
+      data = result.get("data", {})
+      if isinstance(data, dict):
+         sms_status = data.get("status")
+
+         if isinstance(sms_status, str) and sms_status.strip():
+            notification = SMSNotification.query.filter_by(
+               message_id=message_id
+            ).first()
+
+            if notification:
+               notification.status = sms_status.strip().upper()
+               db.session.commit()
+
+      return jsonify(result), response.status_code
+
+   except requests.RequestException as error:
+      print("SMS status connection error:", error)
+      return jsonify({
+         "error": "Could not connect to Paygrid"
+      }), 502
+   except Exception as error:
+      db.session.rollback()
+      print("SMS status processing error", error)
+      return jsonify({
+         "error": "Could not process SMS status"
+      }), 500
+
+@app.route("/students/<int:student_id>/guardians", methods=["POST"])
+def add_guardian(student_id):
+   student = Student.query.get(student_id)
+
+   if student is None:
+      return jsonify({
+         "message": "Student not found"
+      }), 404
+
+   data = request.get_json()
+
+   if not data:
+      return jsonify({
+         "message": "Request body is required"
+      }), 400
+   
+   required_fields = ["full_name", "phone", "relationship"]
+
+   for field in required_fields:
+      if not isinstance(data.get(field), str) or not data[field].strip():
+         return jsonify({
+            "message": f"{field} is required"
+         }), 400
+
+   phone = data["phone"].strip()
+
+   if not phone.isdigit() or len(phone) < 10 or len(phone) > 15:
+      return jsonify({
+         "message": "Invalid phone number"
+      }), 400
+
+   guardian = Guardian(
+      student_id=student.id,
+      full_name=data["full_name"].strip(),
+      phone=phone,
+      relationship=data["relationship"].strip(),
+      sms_enabled=data.get("sms_enabled", True),
+      is_active=True
+   )
+
+   db.session.add(guardian)
+   db.session.commit()
+
+   return jsonify({
+      "message": "Guardian added successfully",
+      "guardian": {
+         "id": guardian.id,
+         "student_id": guardian.student_id,
+         "full_name": guardian.full_name,
+         "phone": guardian.phone,
+         "relationship": guardian.relationship,
+         "sms_enabled": guardian.sms_enabled,
+         "is_active": guardian.is_active
+      }
+   }), 201
+
+   
 
 if __name__ == "__main__":
   app.run(port=5555, debug=True)
