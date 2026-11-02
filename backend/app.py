@@ -750,7 +750,130 @@ def add_guardian(student_id):
       }
    }), 201
 
-   
+
+@app.route("/students/<int:student_id>/guardians", methods=["GET"])
+def get_guardians(student_id):
+   student = Student.query.get(student_id)
+
+   if student is None:
+      return jsonify({
+         "message": "Student not found"
+      }), 404
+
+   guardians = Guardian.query.filter_by(
+      student_id=student.id
+   ).all()
+
+   return jsonify([
+      {
+         "id": guardian.id,
+         "student_id": guardian.student_id,
+         "full_name": guardian.full_name,
+         "phone": guardian.phone,
+         "relationship": guardian.relationship,
+         "sms_enabled": guardian.sms_enabled,
+         "is_active": guardian.is_active
+      }
+      for guardian in guardians
+   ]), 200
+
+@app.route("/guardians/<int:guardian_id>", methods=["PUT"])
+def update_guardian(guardian_id):
+   guardian = Guardian.query.get(guardian_id)
+
+   if guardian is None:
+      return jsonify({
+         "message": "Guardian not found"
+      }), 404
+
+   data = request.get_json()
+
+   if not data:
+      return jsonify({
+         "message": "Request body is required"
+      }), 400
+
+   if "full_name" in data:
+      if not isinstance(data["full_name"], str) or not data["full_name"].strip():
+         return jsonify({
+            "message": "full name cannot be empty"
+         }), 400
+      guardian.full_name = data["full_name"].strip()
+
+   if "phone" in data:
+      phone = str(data["phone"]).strip()
+
+      if not phone.isdigit() or len(phone) < 10 or len(phone) > 15:
+         return jsonify({
+            "message": "Invalid phone number"
+         }), 400
+
+      guardian.phone = phone
+
+   if "relationship" in data:
+      if not isinstance(data["relationship"], str) or not data["relationship"].strip():
+         return jsonify({
+            "message": "Relationship cannot be empty"
+         }), 400
+      guardian.relationship = data["relationship"].strip()
+
+   if "sms_enabled" in data:
+      if not isinstance(data["sms_enabled"], bool):
+         return jsonify({
+            "message": "sms_enabled must be true or false"
+         }), 400
+      guardian.sms_enabled = data["sms_enabled"]
+
+   db.session.commit()
+
+   return jsonify({
+      "message": "Guardian updated successfully",
+      "guardian": {
+         "id": guardian.id,
+         "student_id": guardian.student_id,
+         "full_name": guardian.full_name,
+         "phone": guardian.phone,
+         "relationship": guardian.relationship,
+         "sms_enabled": guardian.sms_enabled,
+         "is_active": guardian.is_active
+        }
+    }), 200
+
+@app.route("/guardians/<int:guardian_id>/status", methods=["PATCH"])
+def update_guardian_status(guardian_id):
+   guardian = Guardian.query.get(guardian_id)
+
+   if guardian is None:
+      return jsonify({
+         "message": "Guardian not found"
+      }), 404
+
+   data = request.get_json()
+
+   if not data or "is_active" not in data:
+      return jsonify({
+         "message": "is_active is required"
+      }), 400
+
+   if not isinstance(data["is_active"], bool):
+      return jsonify({
+         "message": "is_active must be true or false"
+      }), 400
+
+   guardian.is_active = data["is_active"]
+
+   db.session.commit()
+
+   return jsonify({
+      "message": "Guardian status updated successfully",
+      "guardian": {
+         "id": guardian.id,
+         "student_id": guardian.student_id,
+         "full_name": guardian.full_name,
+         "is_active": guardian.is_active
+      }
+   }), 200
+
 
 if __name__ == "__main__":
   app.run(port=5555, debug=True)
