@@ -295,6 +295,73 @@ def delete_student(id):
       "message": "Student deleted successfully!"
    })
 
+def notify_student_guardians(student, attendance, notification_type, event_time):
+   guardians = Guardian.query.filter_by(
+      student_id=student.id,
+      is_active=True,
+      sms_enabled=True
+   ).all()
+
+   sms_sent = False
+
+   if notification_type == "ARRIVAL":
+      event_description = "has arrived at school"
+   else:
+      event_description = "has left school"
+
+   for guardian in guardians:
+      sms_message = (
+         f"Hello, {guardian.full_name}. "
+         f"Your child, {student.first_name} {student.last_name}, "
+         f"{event_description} at "
+         f"{event_time.strftime('%I:%M %p')}."
+      )
+
+      phone_number = guardian.phone.strip().replace("+", "")
+
+      try:
+         sent, message_id, status = send_sms(
+            phone_number,
+            sms_message
+         )
+
+         if sent:
+            sms_sent = True
+
+         notification = SMSNotification(
+            attendance_id=attendance.id,
+            notification_type=notification_type,
+            recipient_phone=phone_number,
+            message_id=message_id,
+            status=status or ("SENT" if sent else "FAILED")
+         )
+
+         db.session.add(notification)
+         db.session.commit()
+
+      except Exception as error:
+         db.session.rollback()
+
+         print(
+            f"SMS notification failed for guardian "
+            f"{guardian.id}: {error}"
+         )
+
+         notification = SMSNotification(
+            attendance_id=attendance.id,
+            notification_type=notification_type,
+            recipient_phone=phone_number,
+            message_id=None,
+            status="FAILED"
+         )
+
+         db.session.add(notification)
+         db.session.commit()
+
+   return sms_sent
+
+
+
 @app.route("/attendance/arrival", methods=["POST"])
 def record_arrival():
    data = request.get_json()
@@ -336,35 +403,15 @@ def record_arrival():
    db.session.add(attendance)
    db.session.commit()
 
-   sms_message = (
-      f"Hello, {student.parent_name or 'Parent/Guardian'}. "
-      f"Your child, {student.first_name} {student.last_name}, "
-      f"has arrived at school at "
-      f"{attendance.arrival_time.strftime('%I:%M %p')}."
+   sms_sent = notify_student_guardians(
+      student,
+      attendance,
+      "ARRIVAL",
+      attendance.arrival_time
    )
-
-   sms_sent = False
-   sms_message_id = None
-   sms_status = None
-
-   if student.parent_phone:
-      phone_number = student.parent_phone.strip().replace("+", "")
-      sms_sent, sms_message_id, sms_status = send_sms(phone_number, sms_message)
-
-      notification = SMSNotification(
-         attendance_id=attendance.id,
-         notification_type="ARRIVAL",
-         recipient_phone=phone_number,
-         message_id=sms_message_id,
-         status=sms_status or ("SENT" if sms_sent else "FAILED")
-      )
-
-      db.session.add(notification)
-      db.session.commit()
 
    return jsonify({
       "message": "Arrival recorded successfully",
-      "sms_message": sms_message,
       "sms_sent": sms_sent,
       "student": {
          "id": student.id,
@@ -402,6 +449,7 @@ def record_departure():
       }), 404
    
    today = datetime.today().date()
+
    attendance = Attendance.query.filter_by(
       student_id=student.id,
       attendance_date=today
@@ -423,35 +471,15 @@ def record_departure():
    
    db.session.commit()
 
-   sms_message = (
-      f"Hello, {student.parent_name or 'Parent/Guardian'}. "
-      f"Your child, {student.first_name} {student.last_name}, "
-      f"has left school at "
-      f"{attendance.departure_time.strftime('%I:%M %p')}."
+   sms_sent = notify_student_guardians(
+      student,
+      attendance,
+      "DEPARTURE",
+      attendance.departure_time
    )
-
-   sms_sent = False
-   sms_message_id = None
-   sms_status = None
-   
-   if student.parent_phone:
-      phone_number = student.parent_phone.strip().replace("+", "")
-      sms_sent, sms_message_id, sms_status = send_sms(phone_number, sms_message)
-
-      notification = SMSNotification(
-         attendance_id=attendance.id,
-         notification_type="DEPARTURE",
-         recipient_phone=phone_number,
-         message_id=sms_message_id,
-         status=sms_status or ("SENT" if sms_sent else "FAILED")
-      )
-
-      db.session.add(notification)
-      db.session.commit()
 
    return jsonify({
          "message": "Departure recorded successfully",
-         "sms_message": sms_message,
          "sms_sent": sms_sent,
          "student": {
             "id": student.id,
