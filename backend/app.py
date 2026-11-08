@@ -304,18 +304,21 @@ def notify_student_guardians(student, attendance, notification_type, event_time)
 
    sms_sent = False
 
-   if notification_type == "ARRIVAL":
-      event_description = "has arrived at school"
-   else:
-      event_description = "has left school"
-
    for guardian in guardians:
-      sms_message = (
-         f"Hello, {guardian.full_name}. "
-         f"Your child, {student.first_name} {student.last_name}, "
-         f"{event_description} at "
-         f"{event_time.strftime('%I:%M %p')}."
-      )
+      if notification_type == "ARRIVAL":
+         sms_message = (
+            f"Dear {guardian.full_name}, "
+            f"your child {student.first_name} {student.last_name} "
+            f"has safely arrived at school today at "
+            f"{event_time.strftime('%I:%M %p')}. Thank you."
+         )
+      else:
+         sms_message = (
+            f"Dear {guardian.full_name}, "
+            f"your child {student.first_name} {student.last_name} "
+            f"has left school today at "
+            f"{event_time.strftime('%I:%M %p')}. Thank you."
+         )
 
       phone_number = guardian.phone.strip().replace("+", "")
 
@@ -681,7 +684,7 @@ def check_sms_status(message_id):
             "Authorization": f"Bearer {api_key}",
             "Accept": "application/json"
          },
-         timeout=20
+         timeout=30
       )
 
       try:
@@ -696,17 +699,28 @@ def check_sms_status(message_id):
 
       #update the database only if Paygrid returns a status in the expected location
       data = result.get("data", {})
+     
       if isinstance(data, dict):
          sms_status = data.get("status")
 
-         if isinstance(sms_status, str) and sms_status.strip():
-            notification = SMSNotification.query.filter_by(
-               message_id=message_id
-            ).first()
+         valid_statuses = {
+            "QUEUED",
+            "SENT",
+            "DELIVERED",
+            "FAILED"
+         }
 
-            if notification:
-               notification.status = sms_status.strip().upper()
-               db.session.commit()
+         if isinstance(sms_status, str):
+            sms_status = sms_status.strip().upper()
+
+            if sms_status in valid_statuses:
+               notification = SMSNotification.query.filter_by(
+                  message_id=message_id
+               ).first()
+
+               if notification:
+                  notification.status=sms_status
+                  db.session.commit()
 
       return jsonify(result), response.status_code
 
