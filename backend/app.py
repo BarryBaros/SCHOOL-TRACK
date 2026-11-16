@@ -3,6 +3,7 @@ from datetime import datetime
 from extensions import db
 import os
 import requests
+from sqlalchemy.exc import IntegrityError
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -295,6 +296,7 @@ def delete_student(id):
       "message": "Student deleted successfully!"
    })
 
+
 def notify_student_guardians(student, attendance, notification_type, event_time):
    guardians = Guardian.query.filter_by(
       student_id=student.id,
@@ -305,6 +307,9 @@ def notify_student_guardians(student, attendance, notification_type, event_time)
    sms_sent = False
 
    for guardian in guardians:
+      if not guardian.phone:
+         continue
+
       if notification_type == "ARRIVAL":
          sms_message = (
             f"Dear {guardian.full_name}, "
@@ -322,46 +327,75 @@ def notify_student_guardians(student, attendance, notification_type, event_time)
 
       phone_number = guardian.phone.strip().replace("+", "")
 
+      notification = SMSNotification(
+         attendance_id=attendance.id,
+         notification_type=notification_type,
+         recipient_phone=phone_number,
+         message_id=None,
+         status="PENDING"
+      )
+
+      try:
+         db.session.add(notification)
+         db.session.commit()
+
+      except IntegrityError:
+         db.session.rollback()
+
+         print(
+            f"Duplicate SMS prevented for guardian "
+            f"{guardian.id}, attendance {attendance.id}"
+         )
+         continue
+
+      except Exception as error:
+         db.session.rollback()
+
+         print(
+            f"Could not create SMS notification for guardian "
+            f"{guardian.id}: {error}"
+         )
+         continue
+
       try:
          sent, message_id, status = send_sms(
             phone_number,
             sms_message
          )
 
+         notification.message_id = message_id
+
+         if status:
+            notification.status = status.strip().upper()
+         else:
+            notification.status = "UNKNOWN"
+
+         db.session.commit()
+
          if sent:
             sms_sent = True
 
-         notification = SMSNotification(
-            attendance_id=attendance.id,
-            notification_type=notification_type,
-            recipient_phone=phone_number,
-            message_id=message_id,
-            status=status or ("SENT" if sent else "FAILED")
-         )
-
-         db.session.add(notification)
-         db.session.commit()
-
       except Exception as error:
+         notification_id = notification.id
+
          db.session.rollback()
 
          print(
-            f"SMS notification failed for guardian "
+            f"SMS processing failed for guardian "
             f"{guardian.id}: {error}"
          )
 
-         notification = SMSNotification(
-            attendance_id=attendance.id,
-            notification_type=notification_type,
-            recipient_phone=phone_number,
-            message_id=None,
-            status="FAILED"
+         existing_notification = db.session.get(
+            SMSNotification,
+            notification_id
          )
 
-         db.session.add(notification)
-         db.session.commit()
+         if existing_notification:
+            existing_notification.status = "UNKNOWN"
+            db.session.commit()
 
    return sms_sent
+
 
 
 
@@ -575,6 +609,7 @@ def get_student_attendance(admission_number):
       "attendance_records": results
    }), 200
 
+
 def send_sms(phone_number, message):
     environment = os.getenv("PAYGRID_ENVIRONMENT", "SANDBOX").upper()
     base_url = os.getenv("PAYGRID_BASE_URL", "").rstrip("/")
@@ -588,7 +623,7 @@ def send_sms(phone_number, message):
 
     if not api_key or not base_url or not sender_id:
         print("SMS settings are missing from .env")
-        return False, None, None
+        return False, None, "FAILED"
 
     payload = {
         "recipient": [phone_number],
@@ -611,29 +646,60 @@ def send_sms(phone_number, message):
         print("SMS environment:", environment)
         print("SMS HTTP status:", response.status_code)
 
-        if response.ok:
-            print("SMS API response:", response.text)
+        if not response.ok:
+            print("SMS request rejected:", response.text)
 
-            try:
-                result = response.json()
-            except ValueError:
-                return False, None, None
+            if response.status_code >= 500:
+               return False, None, "UNKNOWN"
+            
+            return False, None, "FAILED"
 
-            data = result.get("data", {})
-            details = data.get("details", [])
-            sms_details = details[0] if details else {}
+        try:
+            result = response.json()
+        except ValueError:
+            print("Paygrid returned an unreadable response.")
+            return False, None, "UNKNOWN"
 
-            message_id = sms_details.get("message_id")
-            sms_status = sms_details.get("status")
+        data = result.get("data", {})
 
-            return True, message_id, sms_status
+        if not isinstance(data, dict):
+            print("Unexpected Paygrid response structure.")
+            return False, None, "UNKNOWN"
 
-        print("SMS request failed:", response.text)
-        return False, None, None
+        details = data.get("details", [])
+        sms_details = details[0] if details else {}
+
+        if not isinstance(sms_details, dict):
+            print("Unexpected SMS details structure.")
+            return False, None, "UNKNOWN"
+
+        message_id = sms_details.get("message_id")
+        sms_status = sms_details.get("status")
+
+        if not message_id:
+            print("Paygrid response did not include a message ID.")
+            return False, None, "UNKNOWN"
+
+        if not sms_status:
+            sms_status = "QUEUED"
+
+        if isinstance(sms_status, str):
+            sms_status = sms_status.strip().upper()
+
+        return True, message_id, sms_status
+
+    except requests.Timeout as error:
+        print("SMS request timed out; delivery is uncertain:", error)
+        return False, None, "UNKNOWN"
+
+    except requests.ConnectionError as error:
+        print("SMS connection failed; delivery may be uncertain:", error)
+        return False, None, "UNKNOWN"
 
     except requests.RequestException as error:
-        print("SMS connection error:", error)
-        return False, None, None
+        print("SMS request error:", error)
+        return False, None, "UNKNOWN"
+
 
 
 with app.app_context():

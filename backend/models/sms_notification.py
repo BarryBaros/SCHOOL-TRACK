@@ -5,6 +5,15 @@ from extensions import db
 class SMSNotification(db.Model):
   __tablename__ = "sms_notifications"
 
+  __table_args__= (
+    db.UniqueConstraint(
+      "attendance_id",
+      "notification_type",
+      "recipient_phone",
+      name="uq_sms_attendance_type_recipient"
+    ),
+  )
+
   id = db.Column(db.Integer, primary_key=True)
 
   attendance_id = db.Column(
