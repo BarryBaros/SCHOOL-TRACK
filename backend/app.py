@@ -1,10 +1,14 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from datetime import datetime
 from extensions import db
 import os
 import requests
+import secrets
+import io
+import qrcode
 from sqlalchemy.exc import IntegrityError
 from dotenv import load_dotenv
+
 
 load_dotenv()
 
@@ -19,6 +23,7 @@ from models.student import Student
 from models.attendance import Attendance
 from models.sms_notification import SMSNotification
 from models.guardian import Guardian
+from models.qr_code import StudentQRCode
 
 def validate_date(date_string):
    try:
@@ -137,7 +142,18 @@ def create_student():
         parent_phone=data.get("parent_phone")
      )
    
+   
+   qr_token = secrets.token_urlsafe(32)
+
    db.session.add(student)
+   db.session.flush()
+
+   qr_code = StudentQRCode(
+      student_id=student.id,
+      token=qr_token
+   )
+
+   db.session.add(qr_code)
    db.session.commit()
 
    return jsonify({
@@ -148,11 +164,50 @@ def create_student():
          "first_name": student.first_name,
          "last_name": student.last_name,
          "grade": student.grade,
+         "qr_code": {
+            "id": qr_code.id,
+            "is_active": qr_code.is_active,
+            "created_at": qr_code.created_at.isoformat()
+         },
          "date_of_birth": student.date_of_birth.isoformat() if student.date_of_birth else None,
          "parent_name": student.parent_name,
          "parent_phone": student.parent_phone
       }
    }), 201
+
+@app.route("/students/<int:student_id>/qr-code", methods=["GET"])
+def download_student_qr_code(student_id):
+
+   student = db.session.get(Student, student_id)
+
+   if student is None:
+      return jsonify({
+         "message": "Student not found"
+      }), 404
+
+   qr_code = StudentQRCode.query.filter_by(
+      student_id=student.id,
+      is_active=True
+   ).first()
+
+   if qr_code is None:
+      return jsonify({
+         "message": "No active QR code found for this student"
+      }), 404
+
+   qr_image = qrcode.make(qr_code.token)
+
+   image_buffer = io.BytesIO()
+   qr_image.save(image_buffer, format="PNG")
+   image_buffer.seek(0)
+
+   return send_file(
+      image_buffer,
+      mimetype="image/png",
+      as_attachment=True,
+      download_name=f"{student.admission_number}_QR.png"
+   )
+
 
 @app.route("/students", methods=["GET"])
 def get_students():
@@ -276,6 +331,11 @@ def update_student(id):
          "first_name": student.first_name,
          "last_name": student.last_name,
          "grade": student.grade,
+         "qr_code": {
+            "id": qr_code.id,
+            "is_active": qr_code.is_active,
+            "created_at": qr_code.created_at.isoformat()
+         },
          "date_of_birth": student.date_of_birth.isoformat() if student.date_of_birth else None
       }
    })
