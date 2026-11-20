@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, send_file
+from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 from extensions import db
 import os
@@ -24,6 +25,7 @@ from models.attendance import Attendance
 from models.sms_notification import SMSNotification
 from models.guardian import Guardian
 from models.qr_code import StudentQRCode
+from models.user import User
 
 def validate_date(date_string):
    try:
@@ -458,6 +460,50 @@ def notify_student_guardians(student, attendance, notification_type, event_time)
 
 
 
+@app.route("/qr/scan", methods=["POST"])
+def scan_qr_code():
+
+   data = request.get_json()
+
+   if not data or "token" not in data:
+      return jsonify({
+         "message": "QR token is required"
+      }), 400
+
+   token = data["token"].strip()
+
+   if not token:
+      return jsonify({
+         "message": "QR token cannot be empty"
+      }), 400
+
+   qr_code = StudentQRCode.query.filter_by(
+      token=token,
+      is_active=True
+   ).first()
+
+   if qr_code is None:
+      return jsonify({
+         "message": "Invalid or inactive QR code"
+      }), 404
+
+   student = db.session.get(Student, qr_code.student_id)
+
+   if student is None:
+      return jsonify({
+         "message": "Student not found"
+      }), 404
+
+   return jsonify({
+      "message": "QR code scanned successfully",
+      "student": {
+         "id": student.id,
+         "admission_number": student.admission_number,
+         "first_name": student.first_name,
+         "last_name": student.last_name,
+         "grade": student.grade
+      }
+   }), 200
 
 @app.route("/attendance/arrival", methods=["POST"])
 def record_arrival():
